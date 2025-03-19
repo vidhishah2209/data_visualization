@@ -1,0 +1,56 @@
+data_loading:
+  target_column: 'target'
+  test_size: 0.2
+  random_state: 42
+
+preprocessing:
+  handle_missing_values: true
+  handle_outliers: true
+  scale_features: true
+  encoding_method: 'label'
+
+feature_engineering:
+  polynomial_features: true
+  interaction_features: true
+  statistical_features: true
+  n_components: 5
+
+model_config:
+  models:
+    - name: 'random_forest'
+      params:
+        n_estimators: 10
+        max_depth: 3
+    - name: 'xgboost'
+      params:
+        n_estimators: 10
+        max_depth: 3
+  cross_validation:
+    n_splits: 3
+    scoring: 'accuracy'
+
+visualization:
+  plot_types:
+    - 'correlation_matrix'
+    - 'feature_importance'
+    - 'learning_curves'
+  save_format: 'html'
+  dpi: 100
+
+evaluation:
+  metrics:
+    - 'accuracy'
+    - 'precision'
+    - 'recall'
+    - 'f1'
+  save_predictions: true
+
+output:
+  model_dir: 'results/models'
+  visualization_dir: 'results/visualizations'
+  metrics_dir: 'results/metrics'
+  insights_dir: 'results/insights'
+
+logging:
+  level: 'INFO'
+  file: 'test_pipeline.log' 

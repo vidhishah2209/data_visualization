@@ -1,0 +1,149 @@
+# General settings
+general:
+  project_name: "Automated Data Science Workflow"
+  random_seed: 42
+  n_jobs: -1  # Use all available cores
+  use_gpu: true
+  verbose: true
+
+# Data settings
+data:
+  input_path: "C:/Users/Vidhi/Desktop/hackathon_project/data/raw/creditCardFraud_28011964_120214 (2).csv"
+  output_path: "data/processed/"
+  test_size: 0.2
+  validation_size: 0.1
+  stratify: true
+  file_formats:
+    - csv
+    - json
+    - excel
+    - parquet
+  target_column: "default payment next month"
+  random_state: 42
+
+# Preprocessing settings
+preprocessing:
+  auto_detect_types: true
+  handle_missing_values: true
+  missing_value_strategy: "mean"
+  handle_outliers: true
+  outlier_detection_method: "isolation_forest"
+  scaling: true
+  scaling_method: "auto"  # Will be determined by Gemini
+  categorical_encoding: "auto"  # Options: onehot, label, target, frequency, auto
+  datetime_features: true
+  text_cleaning: true
+  feature_selection:
+    method: "variance_threshold"
+  dimensionality_reduction:
+    method: "pca"
+
+# Feature engineering settings
+feature_engineering:
+  use_llm: false
+  llm_model: "models/gemini-1.5-pro-latest"
+  embedding_model: "models/embedding-001"
+  feature_selection: true
+  feature_selection_method: "recursive"  # Options: variance, correlation, mutual_info, recursive, lasso
+  dimensionality_reduction: "auto"  # Options: pca, tsne, umap, auto, none
+  polynomial_features:
+    degree: 2
+    include_bias: false
+  interaction_features: true
+  clustering_features: true
+  text_embeddings: true
+  max_features: 100
+  time_features: false  # Set to true if dealing with time series data
+
+# Model settings
+model:
+  task: "auto"  # Options: classification, regression, clustering, auto
+  auto_select: true
+  models_to_try:
+    - "lightgbm"
+    - "xgboost"
+    - "catboost"
+    - "random_forest"
+    - "neural_network"
+  hyperparameter_tuning: true
+  tuning_method: "optuna"  # Options: grid, random, bayesian, optuna
+  n_trials: 100
+  cv_folds: 5
+  early_stopping: true
+  ensemble: true
+  ensemble_method: "stacking"  # Options: voting, bagging, stacking, boosting
+  metric: "auto"  # Will be set based on task
+
+# Explainability settings
+explainability:
+  generate_shap: true
+  generate_lime: true
+  feature_importance: true
+  partial_dependence: true
+  llm_explanations: true
+  explanation_format: "markdown"  # Options: markdown, html, text
+
+# Results and reporting
+results:
+  save_model: true
+  save_predictions: true
+  generate_report: true
+  generate_visualizations: true
+  visualization_library: "plotly"  # Options: matplotlib, seaborn, plotly
+  generate_presentation: true
+
+# LLM API settings
+llm_api:
+  gemini_api_key: "YOUR_API_KEY_HERE"
+  use_llm: false  # Disable LLM usage
+  max_tokens: 1000
+  temperature: 0.2
+
+# Visualization settings
+visualization:
+  style: "default"
+  color_palette: "viridis"
+  figure_size: [12, 8]
+  dpi: 300
+  save_format: "html"  # Options: "html", "png", "pdf"
+  interactive: true
+  plot_types:
+    - "distribution"
+    - "correlation"
+    - "scatter"
+    - "box"
+    - "3d_pca"
+    - "feature_importance"
+
+# Evaluation metrics
+evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1"
+    - "roc_auc"
+    - "confusion_matrix"
+  cross_validation:
+    enabled: true
+    folds: 5
+    shuffle: true
+
+# Output settings
+output:
+  save_predictions: true
+  save_models: true
+  save_visualizations: true
+  save_metrics: true
+  save_feature_importance: true
+  results_dir: "results"
+  model_dir: "results/models"
+  visualization_dir: "results/visualizations"
+  metrics_dir: "results/metrics"
+  plots_dir: "results/plots"
+
+# Logging settings
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/pipeline.log" 
