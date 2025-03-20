@@ -10,23 +10,53 @@ import logging
 from pathlib import Path
 import joblib
 from visualization.advanced_plots import AdvancedVisualizer
+from feature_engineering.feature_generator import FeatureGenerator
+from preprocessing.data_cleaner import DataCleaner
+from preprocessing.data_processor import DataProcessor
+from models.model_trainer import ModelTrainer
+from models.model_explainer import ModelExplainer
+from typing import Dict, Any, Tuple
+import yaml
+
+logger = logging.getLogger(__name__)
 
 class DataSciencePipeline:
-    def __init__(self, config):
+    def __init__(self, config_path: str):
         """Initialize the pipeline with configuration."""
-        self.config = config
+        self.config = self._load_config(config_path)
         self.setup_logging()
         self.setup_gemini()
-        self.visualizer = AdvancedVisualizer(config)
+        
+        # Initialize components
+        self.visualizer = AdvancedVisualizer(self.config)
+        self.feature_generator = FeatureGenerator(self.config)
+        self.data_cleaner = DataCleaner(self.config)
+        self.data_processor = DataProcessor(self.config)
+        self.model_trainer = ModelTrainer(self.config)
+        self.model_explainer = ModelExplainer(self.config)
+        
+        # Setup output directories
+        self.output_dir = Path(self.config.get('output_dir', 'results'))
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """Load configuration from YAML file."""
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
         
     def setup_logging(self):
         """Set up logging configuration."""
+        log_dir = Path(self.config.get('log_dir', 'logs'))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
         logging.basicConfig(
-            level=self.config['logging']['level'],
-            format=self.config['logging']['format'],
-            filename=self.config['logging']['file']
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_dir / 'pipeline.log'),
+                logging.StreamHandler()
+            ]
         )
-        self.logger = logging.getLogger(__name__)
         
     def setup_gemini(self):
         """Set up Gemini API."""
@@ -43,7 +73,7 @@ class DataSciencePipeline:
         }
         
         if not self.config['llm_api'].get('use_llm', True):  # Check if LLM usage is enabled
-            self.logger.info("LLM usage is disabled, using default recommendations")
+            logger.info("LLM usage is disabled, using default recommendations")
             return default_recommendations
             
         prompt = f"""
@@ -79,198 +109,125 @@ class DataSciencePipeline:
                         if key in recommendations:
                             recommendations[key] = value
             
-            self.logger.info(f"Gemini recommendations: {recommendations}")
+            logger.info(f"Gemini recommendations: {recommendations}")
             return recommendations
             
         except Exception as e:
-            self.logger.warning(f"Error getting Gemini recommendations: {str(e)}. Using default values.")
+            logger.warning(f"Error getting Gemini recommendations: {str(e)}. Using default values.")
             return default_recommendations
     
-    def load_data(self, file_path):
-        """Load and validate data."""
-        self.logger.info(f"Loading data from {file_path}")
-        df = pd.read_csv(file_path)
+    def load_data(self) -> pd.DataFrame:
+        """Load data from configured source."""
+        data_path = self.config['data']['input_path']
+        logger.info(f"Loading data from {data_path}")
         
-        # Validate target column
-        target_col = self.config['data']['target_column']
-        if target_col not in df.columns:
-            raise ValueError(f"Target column '{target_col}' not found in data")
-            
-        return df
+        try:
+            data = pd.read_csv(data_path)
+            logger.info(f"Loaded data with shape: {data.shape}")
+            return data
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            raise
     
-    def preprocess_data(self, df):
-        """Preprocess the data based on configuration and Gemini recommendations."""
-        self.logger.info("Starting data preprocessing")
+    def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+        """Preprocess the data using all preprocessing components."""
+        logger.info("Starting data preprocessing")
         
-        # Store target column
+        # Clean data
+        cleaned_data = self.data_cleaner.clean_data(data)
+        
+        # Process data
+        processed_data = self.data_processor.process_data(cleaned_data)
+        
+        # Generate additional features
+        if self.config.get('feature_engineering', {}).get('enabled', False):
+            processed_data = self.feature_generator.generate_features(processed_data)
+        
+        # Split features and target
         target_col = self.config['data']['target_column']
+        X = processed_data.drop(columns=[target_col])
+        y = processed_data[target_col]
         
-        # Remove rows where target is missing
-        df = df.dropna(subset=[target_col])
-        
-        # Store target column and convert to numeric if needed
-        y = pd.to_numeric(df[target_col], errors='coerce')
-        # Drop any remaining NaN values in target after conversion
-        mask = ~y.isna()
-        y = y[mask]
-        X = df.drop(columns=[target_col]).loc[mask]
-        
-        # Get Gemini recommendations
-        recommendations = self.get_gemini_recommendations(X)
-        
-        # Handle missing values first
-        if self.config['preprocessing']['handle_missing_values']:
-            strategy = self.config['preprocessing']['missing_value_strategy']
-            if strategy == 'llm':
-                # Use Gemini to suggest imputation strategy
-                prompt = f"Suggest imputation strategy for missing values in this dataset: {X.isnull().sum()}"
-                response = self.model.generate_content(prompt)
-                strategy = response.text.strip().lower()
-            
-            if strategy == 'mean':
-                X = X.fillna(X.mean())
-            elif strategy == 'median':
-                X = X.fillna(X.median())
-            elif strategy == 'mode':
-                X = X.fillna(X.mode().iloc[0])
-            else:  # Default to mean if strategy is not recognized
-                X = X.fillna(X.mean())
-        else:
-            # Always handle missing values with mean imputation if not explicitly configured
-            X = X.fillna(X.mean())
-        
-        # Handle outliers
-        if self.config['preprocessing']['handle_outliers']:
-            method = self.config['preprocessing']['outlier_detection_method']
-            if method == 'isolation_forest':
-                from sklearn.ensemble import IsolationForest
-                iso_forest = IsolationForest(contamination=0.1, random_state=42)
-                outliers = iso_forest.fit_predict(X)
-                # Keep track of indices and ensure X and y stay aligned
-                X = X.reset_index(drop=True)
-                y = pd.Series(y).reset_index(drop=True)
-                mask = outliers == 1
-                X = X[mask].reset_index(drop=True)
-                y = y[mask].reset_index(drop=True)
-        
-        # Feature selection
-        if self.config['preprocessing']['feature_selection']['method'] == 'variance_threshold':
-            threshold = float(recommendations['threshold'])
-            selector = VarianceThreshold(threshold=threshold)
-            selector.fit(X)
-            selected_features = X.columns[selector.get_support()].tolist()
-            X = X[selected_features]
-        
-        # Scaling
-        if self.config['preprocessing']['scaling']:
-            scaling_method = recommendations['scaling_method']
-            if scaling_method == 'standard':
-                scaler = StandardScaler()
-            elif scaling_method == 'minmax':
-                scaler = MinMaxScaler()
-            else:
-                scaler = RobustScaler()
-            
-            X = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
-        
-        # Dimensionality reduction
-        if self.config['preprocessing']['dimensionality_reduction']['method'] == 'pca':
-            n_components = int(recommendations['n_components'])
-            n_components = min(n_components, X.shape[1])  # Ensure n_components doesn't exceed number of features
-            pca = PCA(n_components=n_components)
-            X = pd.DataFrame(
-                pca.fit_transform(X),
-                columns=[f'PC{i+1}' for i in range(n_components)]
-            )
-        
-        # Combine features and target
-        df = X.copy()
-        df[target_col] = y
-        
-        return df
+        return X, y
     
-    def train_models(self, X_train, X_test, y_train, y_test):
+    def train_models(self, X: pd.DataFrame, y: pd.Series) -> Tuple[Dict[str, Any], Dict[str, float]]:
         """Train and evaluate models."""
-        self.logger.info("Starting model training")
+        logger.info("Starting model training")
         
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
         
-        # Train Random Forest as an example
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
+        # Train models
+        models, metrics = self.model_trainer.train_models(
+            X_train, X_test, y_train, y_test
+        )
         
-        # Make predictions
-        y_pred = model.predict(X_test)
-        
-        # Calculate metrics
-        metrics = {
-            'accuracy': accuracy_score(y_test, y_pred),
-            'precision': precision_score(y_test, y_pred),
-            'recall': recall_score(y_test, y_pred),
-            'f1': f1_score(y_test, y_pred)
-        }
-        
-        return model, metrics
+        return models, metrics
     
-    def save_results(self, model, metrics, df):
-        """Save results and visualizations."""
-        self.logger.info("Saving results")
+    def generate_explanations(self, models: Dict[str, Any], X: pd.DataFrame, y: pd.Series) -> Dict[str, Any]:
+        """Generate model explanations."""
+        logger.info("Starting explanation generation")
         
-        # Create necessary directories
-        os.makedirs(self.config['output']['metrics_dir'], exist_ok=True)
-        os.makedirs(self.config['output']['model_dir'], exist_ok=True)
-        os.makedirs(self.config['output']['plots_dir'], exist_ok=True)
-        os.makedirs(self.config['output']['visualization_dir'], exist_ok=True)
+        explanations = self.model_explainer.generate_explanations(models, X, y)
+        return explanations
+    
+    def create_visualizations(self, data: pd.DataFrame, models: Dict[str, Any], 
+                            explanations: Dict[str, Any]) -> None:
+        """Create visualizations using the advanced visualizer."""
+        logger.info("Creating visualizations")
+        
+        self.visualizer.create_all_plots(data, models, explanations)
+    
+    def save_results(self, models: Dict[str, Any], metrics: Dict[str, float], 
+                    explanations: Dict[str, Any], cleaned_data: pd.DataFrame) -> None:
+        """Save all results."""
+        logger.info("Saving results")
+        
+        # Save cleaned data
+        cleaned_data.to_csv(self.output_dir / 'cleaned_data.csv', index=False)
         
         # Save metrics
-        metrics_df = pd.DataFrame([metrics])
-        metrics_df.to_csv(os.path.join(self.config['output']['metrics_dir'], 'metrics.csv'), index=False)
+        pd.DataFrame([metrics]).to_csv(self.output_dir / 'metrics.csv', index=False)
         
-        # Save feature importance
-        if hasattr(model, 'feature_importances_'):
-            importance_df = pd.DataFrame({
-                'feature': df.drop(columns=[self.config['data']['target_column']]).columns,
-                'importance': model.feature_importances_
-            })
-            importance_df.to_csv(os.path.join(self.config['output']['metrics_dir'], 'feature_importance.csv'), index=False)
-            
-        # Save model
-        joblib.dump(model, os.path.join(self.config['output']['model_dir'], 'model.joblib'))
+        # Save model explanations
+        self.model_explainer.save_explanations(explanations)
         
-        # Create and save visualizations
-        self.visualizer.create_all_visualizations(df, self.config['data']['target_column'])
+        # Save models if configured
+        if self.config.get('save_models', True):
+            model_dir = self.output_dir / 'models'
+            model_dir.mkdir(exist_ok=True)
+            for name, model in models.items():
+                joblib.dump(model, model_dir / f'{name}.joblib')
     
-    def run(self, data_path):
+    def run(self):
         """Run the complete pipeline."""
         try:
             # Load data
-            df = self.load_data(data_path)
+            data = self.load_data()
             
             # Preprocess data
-            df = self.preprocess_data(df)
-            
-            # Save processed data
-            os.makedirs(self.config['data']['output_path'], exist_ok=True)
-            df.to_csv(os.path.join(self.config['data']['output_path'], 'cleaned_data.csv'), index=False)
-            
-            # Split data
-            X = df.drop(columns=[self.config['data']['target_column']])
-            y = df[self.config['data']['target_column']]
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y,
-                test_size=self.config['data']['test_size'],
-                random_state=self.config['data']['random_state']
-            )
+            X, y = self.preprocess_data(data)
             
             # Train models
-            model, metrics = self.train_models(X_train, X_test, y_train, y_test)
+            models, metrics = self.train_models(X, y)
+            
+            # Generate explanations
+            explanations = self.generate_explanations(models, X, y)
+            
+            # Create visualizations
+            self.create_visualizations(data, models, explanations)
             
             # Save results
-            self.save_results(model, metrics, df)
+            self.save_results(models, metrics, explanations, data)
             
-            self.logger.info("Pipeline completed successfully")
+            logger.info("Pipeline completed successfully")
             
         except Exception as e:
-            self.logger.error(f"Pipeline failed: {str(e)}")
-            raise 
+            logger.error(f"Pipeline failed: {str(e)}")
+            raise
+
+if __name__ == "__main__":
+    pipeline = DataSciencePipeline("config.yaml")
+    pipeline.run() 

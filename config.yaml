@@ -8,7 +8,7 @@ general:
 
 # Data settings
 data:
-  input_path: "C:/Users/Vidhi/Desktop/hackathon_project/data/raw/creditCardFraud_28011964_120214 (2).csv"
+  input_path: "data/raw/creditCardFraud_28011964_120214 (2).csv"
   output_path: "data/processed/"
   test_size: 0.2
   validation_size: 0.1
@@ -25,9 +25,11 @@ data:
 preprocessing:
   auto_detect_types: true
   handle_missing_values: true
-  missing_value_strategy: "mean"
+  missing_value_strategy: "mean"  # Options: mean, median, mode
   handle_outliers: true
-  outlier_detection_method: "isolation_forest"
+  outlier_detection:
+    method: "isolation_forest"
+    contamination: 0.1
   scaling: true
   scaling_method: "auto"  # Will be determined by Gemini
   categorical_encoding: "auto"  # Options: onehot, label, target, frequency, auto
@@ -47,11 +49,15 @@ feature_engineering:
   feature_selection_method: "recursive"  # Options: variance, correlation, mutual_info, recursive, lasso
   dimensionality_reduction: "auto"  # Options: pca, tsne, umap, auto, none
   polynomial_features:
+    enabled: false
     degree: 2
-    include_bias: false
-  interaction_features: true
-  clustering_features: true
-  text_embeddings: true
+  interaction_features: false
+  clustering_features:
+    enabled: false
+    n_clusters: 3
+  text_embeddings:
+    enabled: false
+    model: "sentence-transformers/all-MiniLM-L6-v2"
   max_features: 100
   time_features: false  # Set to true if dealing with time series data
 
@@ -60,13 +66,13 @@ model:
   task: "auto"  # Options: classification, regression, clustering, auto
   auto_select: true
   models_to_try:
-    - "lightgbm"
-    - "xgboost"
-    - "catboost"
     - "random_forest"
-    - "neural_network"
-  hyperparameter_tuning: true
-  tuning_method: "optuna"  # Options: grid, random, bayesian, optuna
+    - "gradient_boosting"
+    - "logistic_regression"
+  hyperparameter_tuning:
+    enabled: true
+    method: "grid_search"
+    cv: 5
   n_trials: 100
   cv_folds: 5
   early_stopping: true
@@ -82,6 +88,9 @@ explainability:
   partial_dependence: true
   llm_explanations: true
   explanation_format: "markdown"  # Options: markdown, html, text
+  shap_values: true
+  lime_explanations: true
+  output_dir: "results/explanations"
 
 # Results and reporting
 results:
@@ -94,10 +103,12 @@ results:
 
 # LLM API settings
 llm_api:
-  gemini_api_key: "YOUR_API_KEY_HERE"
+  gemini_api_key: "AIzaSyBpDLKzRtdE3d2_dmljIqfaqrKUdGJVnT8"
   use_llm: false  # Disable LLM usage
   max_tokens: 1000
-  temperature: 0.2
+  temperature: 0.8
+  provider: "gemini"
+  api_key: "AIzaSyBpDLKzRtdE3d2_dmljIqfaqrKUdGJVnT8"  # Add your API key here
 
 # Visualization settings
 visualization:
@@ -114,6 +125,15 @@ visualization:
     - "box"
     - "3d_pca"
     - "feature_importance"
+  enabled: true
+  plots:
+    - "distribution"
+    - "correlation"
+    - "scatter"
+    - "box"
+    - "pca"
+    - "feature_importance"
+  output_dir: "results/visualizations"
 
 # Evaluation metrics
 evaluation:
@@ -141,6 +161,8 @@ output:
   visualization_dir: "results/visualizations"
   metrics_dir: "results/metrics"
   plots_dir: "results/plots"
+  output_dir: "results"
+  log_dir: "logs"
 
 # Logging settings
 logging:

@@ -1,82 +1,50 @@
-# Advanced Data Science Pipeline
+# Data Science Pipeline
 
-A comprehensive, production-ready data science pipeline that includes data preprocessing, feature engineering, model training, visualization, and model explainability.
+A comprehensive data science pipeline that includes data preprocessing, feature engineering, model training, and visualization capabilities.
 
 ## Features
 
-- **Advanced Data Preprocessing**
-  - Intelligent missing value handling (mean, median, mode, KNN, LLM-based)
-  - Outlier detection and treatment
+- **Data Preprocessing**
+  - Missing value handling
+  - Outlier detection and handling
   - Feature scaling and normalization
-  - Feature selection and dimensionality reduction
+  - Dimensionality reduction
 
 - **Feature Engineering**
-  - Polynomial features
-  - Interaction features
-  - Time-based features
-  - Clustering-based features
-  - Aggregation features
+  - Text embeddings generation
+  - Polynomial feature generation
+  - Clustering-based feature generation
+  - Automated feature selection
 
-- **Model Training & Evaluation**
-  - Support for multiple ML/DL models
+- **Model Training**
+  - Multiple model support (Random Forest, Gradient Boosting, Logistic Regression)
   - Hyperparameter tuning
-  - Cross-validation
-  - Comprehensive evaluation metrics
-  - Model persistence
+  - Ensemble methods
+  - Model evaluation metrics
 
-- **Advanced Visualization**
-  - Distribution plots with KDE
-  - Correlation heatmaps
-  - 3D scatter plots
-  - 3D PCA visualization
-  - Time series plots
-  - Feature relationship plots
-  - Box plots
-  - Interactive Plotly visualizations
-
-- **Model Explainability**
-  - SHAP values
+- **Model Explanation**
+  - Feature importance analysis
+  - SHAP values for tree-based models
   - LIME explanations
-  - Feature importance
-  - Partial dependence plots
-  - LLM-based explanations
+  - Model interpretability visualizations
 
-## Project Structure
-
-```
-hackathon_project/
-├── data/                   # Data directory
-│   ├── raw/               # Raw data files
-│   └── processed/         # Processed data files
-├── feature_engineering/   # Feature engineering modules
-│   └── advanced_features.py
-├── models/                # Model training modules
-│   └── model_trainer.py
-├── preprocessing/         # Data preprocessing modules
-│   └── data_cleaner.py
-├── visualization/         # Visualization modules
-│   └── advanced_plots.py
-├── explainability/        # Model explainability modules
-│   └── model_explainer.py
-├── results/              # Results directory
-│   ├── insights/         # Data insights
-│   ├── visualizations/   # Generated visualizations
-│   ├── metrics/          # Model metrics
-│   └── models/           # Saved models
-├── config.yaml           # Configuration file
-├── pipeline.py           # Main pipeline
-└── requirements.txt      # Project dependencies
-```
+- **Visualization**
+  - Distribution plots
+  - Correlation matrices
+  - Scatter plots
+  - Box plots
+  - PCA visualizations
+  - Feature importance plots
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/hackathon_project.git
-cd hackathon_project
+git clone https://github.com/yourusername/data_science_pipeline.git
+cd data_science_pipeline
 ```
 
-2. Create a virtual environment (recommended):
+2. Create a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -89,59 +57,85 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Configure the pipeline in `config.yaml`:
+1. Configure the pipeline by editing `config.yaml`:
 ```yaml
 data:
-  target_column: "target"  # Your target column name
+  input_path: "data/raw/data.csv"
+  target_column: "target"
   test_size: 0.2
   random_state: 42
 
-preprocessing:
-  scaler: "standard"
-  handle_missing_values: true
-  missing_value_strategy: "knn"
-  handle_outliers: true
-  outlier_detection_method: "isolation_forest"
-  feature_selection:
-    method: "variance_threshold"
-    threshold: 0.01
-  dimensionality_reduction:
-    method: "pca"
-    n_components: 3
-
-# ... (see config.yaml for more options)
+# ... (other configurations)
 ```
 
 2. Run the pipeline:
-```python
-from pipeline import DataSciencePipeline
+```bash
+python pipeline.py
+```
 
-pipeline = DataSciencePipeline()
-pipeline.run('data/your_dataset.csv')
+## Project Structure
+
+```
+data_science_pipeline/
+├── data/
+│   ├── raw/
+│   └── processed/
+├── preprocessing/
+│   ├── data_cleaner.py
+│   └── data_processor.py
+├── feature_engineering/
+│   └── feature_generator.py
+├── models/
+│   ├── model_trainer.py
+│   └── model_explainer.py
+├── visualization/
+│   └── advanced_plots.py
+├── results/
+│   ├── metrics/
+│   ├── models/
+│   ├── plots/
+│   └── explanations/
+├── logs/
+├── config.yaml
+├── pipeline.py
+├── requirements.txt
+└── README.md
 ```
 
 ## Configuration
 
-The pipeline is highly configurable through the `config.yaml` file. Key configuration options include:
+The pipeline is configured through `config.yaml`. Key configuration sections include:
 
-- Data loading and preprocessing settings
-- Feature engineering parameters
-- Model configurations and hyperparameters
-- Visualization settings
-- Evaluation metrics
-- Output settings
-
-See `config.yaml` for detailed configuration options.
+- `data`: Input/output paths and data settings
+- `preprocessing`: Data cleaning and preprocessing options
+- `feature_engineering`: Feature generation settings
+- `model`: Model training configuration
+- `explanation`: Model explanation settings
+- `visualization`: Plot generation options
 
 ## Output
 
-The pipeline generates various outputs in the `results` directory:
+The pipeline generates the following outputs:
 
-- **Data Insights**: Basic statistics, missing value analysis, etc.
-- **Visualizations**: Distribution plots, correlation heatmaps, 3D plots, etc.
-- **Model Metrics**: Performance metrics, cross-validation scores
-- **Model Explanations**: SHAP values, LIME explanations, feature importance
-- **Saved Models**: Trained model objects
+1. **Processed Data**
+   - Cleaned and preprocessed dataset
+   - Feature-engineered dataset
+
+2. **Model Results**
+   - Trained models
+   - Model metrics
+   - Feature importance scores
+
+3. **Visualizations**
+   - Data distribution plots
+   - Correlation matrices
+   - Model performance plots
+   - Feature importance plots
+
+4. **Explanations**
+   - SHAP values
+   - LIME explanations
+   - Feature importance analysis
 
 ## Contributing
 
@@ -153,10 +147,4 @@ The pipeline generates various outputs in the `results` directory:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Built with scikit-learn, pandas, numpy, and other open-source libraries
-- Inspired by industry best practices and modern data science workflows
-- Special thanks to the open-source community for their valuable tools and libraries 
+This project is licensed under the MIT License - see the LICENSE file for details. 

@@ -14,6 +14,8 @@ from datetime import datetime
 import re
 import json
 from tqdm import tqdm
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import VarianceThreshold
 
 # Add parent directory to path to import utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,6 +33,8 @@ class DataProcessor:
     - Categorical encoding
     - Datetime feature extraction
     - Text cleaning
+    - Feature selection
+    - Dimensionality reduction
     """
     
     def __init__(self, config: Dict):
@@ -58,6 +62,10 @@ class DataProcessor:
         
         # Suppress warnings
         warnings.filterwarnings('ignore')
+        
+        self.scaler = None
+        self.pca = None
+        self.feature_selector = None
     
     @timer_decorator
     def process_data(self, df: pd.DataFrame, is_training: bool = True) -> pd.DataFrame:
@@ -75,6 +83,11 @@ class DataProcessor:
         
         # Make a copy to avoid modifying the original
         result_df = df.copy()
+        
+        # Store target column if it exists
+        target_col = self.data_config.get('target_column')
+        if target_col and target_col in result_df.columns:
+            target_values = result_df[target_col].copy()
         
         # Auto-detect column types if enabled
         if self.preprocessing_config.get('auto_detect_types', True):
@@ -100,9 +113,24 @@ class DataProcessor:
         if self.preprocessing_config.get('categorical_encoding', 'auto') != 'none':
             result_df = self.encode_categorical(result_df, is_training)
         
+        # Feature selection
+        if self.preprocessing_config.get('feature_selection', {}).get('method') == 'variance_threshold':
+            result_df = self._apply_feature_selection(result_df)
+        
         # Scale numerical features if enabled
         if self.preprocessing_config.get('scaling', True):
-            result_df = self.scale_features(result_df, is_training)
+            result_df = self._apply_scaling(result_df)
+        
+        # Dimensionality reduction
+        if self.preprocessing_config.get('dimensionality_reduction', {}).get('method') == 'pca':
+            result_df = self._apply_pca(result_df)
+        
+        # Restore target column if it exists
+        if target_col and target_col in df.columns:
+            # Convert target to binary (0/1) if it's not already
+            if target_values.nunique() == 2:
+                target_values = (target_values == target_values.max()).astype(int)
+            result_df[target_col] = target_values
         
         # Optimize memory usage
         result_df = get_optimal_dtypes(result_df)
@@ -625,60 +653,75 @@ class DataProcessor:
         
         return result_df
     
-    def scale_features(self, df: pd.DataFrame, is_training: bool = True) -> pd.DataFrame:
-        """
-        Scale numerical features.
+    def _apply_feature_selection(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply feature selection using variance threshold."""
+        threshold = float(self.preprocessing_config['feature_selection'].get('threshold', 0.01))
+        self.feature_selector = VarianceThreshold(threshold=threshold)
+        self.feature_selector.fit(df)
         
-        Args:
-            df: Input DataFrame
-            is_training: Whether this is training data or not
-            
-        Returns:
-            DataFrame with scaled features
-        """
-        logger.info("Scaling numerical features...")
-        
-        numeric_cols = self.column_types.get('numeric', [])
-        if not numeric_cols:
-            logger.info("No numeric columns to scale.")
-            return df
-        
-        result_df = df.copy()
-        
-        # Get scaling method from config
+        # Get selected features
+        selected_features = df.columns[self.feature_selector.get_support()].tolist()
+        return df[selected_features]
+    
+    def _apply_scaling(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply feature scaling."""
         scaling_method = self.preprocessing_config.get('scaling_method', 'standard')
         
-        if is_training:
-            # Initialize scaler based on method
-            if scaling_method == 'standard':
-                scaler = StandardScaler()
-            elif scaling_method == 'minmax':
-                scaler = MinMaxScaler()
-            elif scaling_method == 'robust':
-                scaler = RobustScaler()
-            else:
-                logger.warning(f"Unknown scaling method: {scaling_method}. Using StandardScaler.")
-                scaler = StandardScaler()
-            
-            self.scalers['numeric'] = scaler
-            
-            # Fit scaler
-            scaler.fit(result_df[numeric_cols])
+        if scaling_method == 'standard':
+            self.scaler = StandardScaler()
+        elif scaling_method == 'minmax':
+            self.scaler = MinMaxScaler()
+        else:
+            self.scaler = RobustScaler()
         
-        # Use pre-fitted scaler
-        if 'numeric' in self.scalers:
-            scaler = self.scalers['numeric']
-            
-            # Transform data
-            result_df[numeric_cols] = scaler.transform(result_df[numeric_cols])
-            
-            # Track transformation
-            for col in numeric_cols:
-                self.transformations_applied[col] = f'{scaling_method}_scaling'
+        scaled_data = self.scaler.fit_transform(df)
+        return pd.DataFrame(scaled_data, columns=df.columns, index=df.index)
+    
+    def _apply_pca(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply PCA dimensionality reduction."""
+        logger.info("Applying PCA...")
         
-        logger.info(f"Scaling completed using {scaling_method} method.")
+        # Store target column if it exists
+        target_col = self.data_config.get('target_column')
+        if target_col and target_col in df.columns:
+            target_values = df[target_col].copy()
         
-        return result_df
+        # Select numeric columns excluding target
+        numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+        if target_col in numeric_cols:
+            numeric_cols = numeric_cols.drop(target_col)
+        
+        # Check for remaining missing values in numeric columns
+        if df[numeric_cols].isnull().any().any():
+            logger.warning("Found remaining missing values in numeric columns, filling with mean")
+            imputer = SimpleImputer(strategy='mean')
+            df[numeric_cols] = imputer.fit_transform(df[numeric_cols])
+        
+        # Get PCA configuration
+        pca_config = self.preprocessing_config.get('dimensionality_reduction', {}).get('pca', {})
+        n_components = pca_config.get('n_components', 3)
+        
+        # Ensure n_components doesn't exceed number of features
+        n_components = min(n_components, len(numeric_cols))
+        
+        # Apply PCA
+        self.pca = PCA(n_components=n_components)
+        pca_result = self.pca.fit_transform(df[numeric_cols])
+        
+        # Create new DataFrame with PCA results
+        pca_df = pd.DataFrame(
+            pca_result,
+            columns=[f'PC{i+1}' for i in range(n_components)],
+            index=df.index
+        )
+        
+        # Add target column back if it exists
+        if target_col and target_col in df.columns:
+            pca_df[target_col] = target_values
+        
+        logger.info(f"PCA applied. Explained variance ratio: {self.pca.explained_variance_ratio_}")
+        
+        return pca_df
     
     def save_preprocessor(self, path: str):
         """

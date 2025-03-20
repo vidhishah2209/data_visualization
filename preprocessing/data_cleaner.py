@@ -1,13 +1,14 @@
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Optional, Tuple
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, LabelEncoder
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.decomposition import PCA
 import logging
 from pathlib import Path
 import joblib
+from sklearn.ensemble import IsolationForest
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,8 @@ class DataCleaner:
         self.variance_threshold = None
         self.pca = None
         self.feature_names = None
+        self.preprocessing_config = config.get('preprocessing', {})
+        self.label_encoders = {}
         
     def clean_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Apply all cleaning and preprocessing steps."""
@@ -28,88 +31,76 @@ class DataCleaner:
         # Store original feature names
         self.feature_names = data.columns.tolist()
         
+        # Identify numeric and categorical columns
+        numeric_cols = data.select_dtypes(include=['float64', 'int64']).columns
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+        
         # Handle missing values
-        data = self._handle_missing_values(data)
+        if self.preprocessing_config.get('handle_missing_values', True):
+            strategy = self.preprocessing_config.get('missing_value_strategy', 'mean')
+            data = self._handle_missing_values(data, strategy, numeric_cols, categorical_cols)
         
-        # Handle outliers
-        data = self._handle_outliers(data)
+        # Handle outliers (only for numeric columns)
+        if self.preprocessing_config.get('handle_outliers', True):
+            method = self.preprocessing_config.get('outlier_detection_method', 'isolation_forest')
+            data[numeric_cols] = self._handle_outliers(data[numeric_cols], method)
         
-        # Scale features
-        data = self._scale_features(data)
+        # Encode categorical variables
+        data = self._encode_categorical_variables(data, categorical_cols)
+        
+        # Scale numeric features
+        data[numeric_cols] = self._scale_features(data[numeric_cols])
         
         # Apply feature selection
         data = self._select_features(data)
         
         # Apply dimensionality reduction if configured
-        if self.config['preprocessing']['dimensionality_reduction']['enabled']:
+        if self.config['preprocessing'].get('dimensionality_reduction', {}).get('enabled', False):
             data = self._reduce_dimensions(data)
         
         logger.info(f"Data cleaning completed. Final shape: {data.shape}")
         return data
     
-    def _handle_missing_values(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Handle missing values using configured strategy."""
+    def _handle_missing_values(self, data: pd.DataFrame, strategy: str, 
+                             numeric_cols: List[str], categorical_cols: List[str]) -> pd.DataFrame:
+        """Handle missing values using specified strategy."""
         logger.info("Handling missing values")
         
-        missing_strategy = self.config['preprocessing']['missing_value_strategy']
+        # Handle numeric columns
+        if len(numeric_cols) > 0:
+            if strategy == 'mean':
+                data[numeric_cols] = data[numeric_cols].fillna(data[numeric_cols].mean())
+            elif strategy == 'median':
+                data[numeric_cols] = data[numeric_cols].fillna(data[numeric_cols].median())
+            else:  # Default to mean
+                data[numeric_cols] = data[numeric_cols].fillna(data[numeric_cols].mean())
         
-        if missing_strategy == 'knn':
-            self.imputer = KNNImputer(n_neighbors=5)
-            data_imputed = self.imputer.fit_transform(data)
-            return pd.DataFrame(data_imputed, columns=data.columns, index=data.index)
+        # Handle categorical columns
+        if len(categorical_cols) > 0:
+            data[categorical_cols] = data[categorical_cols].fillna(data[categorical_cols].mode().iloc[0])
         
-        elif missing_strategy == 'llm':
-            # Use LLM-based imputation for text columns
-            text_cols = data.select_dtypes(include=['object']).columns
-            numerical_cols = data.select_dtypes(include=['float64', 'int64']).columns
-            
-            # Handle numerical columns with KNN
-            if len(numerical_cols) > 0:
-                self.imputer = KNNImputer(n_neighbors=5)
-                data[numerical_cols] = self.imputer.fit_transform(data[numerical_cols])
-            
-            # Handle text columns with mode
-            for col in text_cols:
-                data[col].fillna(data[col].mode()[0], inplace=True)
-            
-            return data
-        
-        else:
-            # Use simple imputation strategies
-            self.imputer = SimpleImputer(strategy=missing_strategy)
-            data_imputed = self.imputer.fit_transform(data)
-            return pd.DataFrame(data_imputed, columns=data.columns, index=data.index)
+        return data
     
-    def _handle_outliers(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Handle outliers using configured method."""
+    def _handle_outliers(self, data: pd.DataFrame, method: str) -> pd.DataFrame:
+        """Handle outliers using specified method."""
         logger.info("Handling outliers")
         
-        outlier_method = self.config['preprocessing']['outlier_detection_method']
-        numerical_cols = data.select_dtypes(include=['float64', 'int64']).columns
-        
-        if outlier_method == 'isolation_forest':
-            from sklearn.ensemble import IsolationForest
-            
+        if method == 'isolation_forest':
             iso_forest = IsolationForest(contamination=0.1, random_state=42)
-            outliers = iso_forest.fit_predict(data[numerical_cols])
-            
-            # Replace outliers with median
-            for col in numerical_cols:
-                data.loc[outliers == -1, col] = data[col].median()
+            outliers = iso_forest.fit_predict(data)
+            mask = outliers == 1
+            data = data[mask].reset_index(drop=True)
         
-        elif outlier_method == 'z_score':
-            for col in numerical_cols:
-                z_scores = np.abs((data[col] - data[col].mean()) / data[col].std())
-                data.loc[z_scores > 3, col] = data[col].median()
+        return data
+    
+    def _encode_categorical_variables(self, data: pd.DataFrame, categorical_cols: List[str]) -> pd.DataFrame:
+        """Encode categorical variables using label encoding."""
+        logger.info("Encoding categorical variables")
         
-        elif outlier_method == 'iqr':
-            for col in numerical_cols:
-                Q1 = data[col].quantile(0.25)
-                Q3 = data[col].quantile(0.75)
-                IQR = Q3 - Q1
-                lower_bound = Q1 - 1.5 * IQR
-                upper_bound = Q3 + 1.5 * IQR
-                data.loc[(data[col] < lower_bound) | (data[col] > upper_bound), col] = data[col].median()
+        for col in categorical_cols:
+            le = LabelEncoder()
+            data[col] = le.fit_transform(data[col].astype(str))
+            self.label_encoders[col] = le
         
         return data
     
@@ -117,8 +108,7 @@ class DataCleaner:
         """Scale numerical features using configured method."""
         logger.info("Scaling features")
         
-        scaling_method = self.config['preprocessing']['scaling_method']
-        numerical_cols = data.select_dtypes(include=['float64', 'int64']).columns
+        scaling_method = self.config['preprocessing'].get('scaling_method', 'standard')
         
         if scaling_method == 'standard':
             self.scaler = StandardScaler()
@@ -126,19 +116,21 @@ class DataCleaner:
             self.scaler = MinMaxScaler()
         elif scaling_method == 'robust':
             self.scaler = RobustScaler()
+        else:
+            self.scaler = StandardScaler()
         
-        data[numerical_cols] = self.scaler.fit_transform(data[numerical_cols])
-        return data
+        scaled_data = self.scaler.fit_transform(data)
+        return pd.DataFrame(scaled_data, columns=data.columns, index=data.index)
     
     def _select_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Apply feature selection techniques."""
         logger.info("Applying feature selection")
         
-        selection_config = self.config['preprocessing']['feature_selection']
+        selection_config = self.config['preprocessing'].get('feature_selection', {})
         
-        if selection_config['method'] == 'variance_threshold':
+        if selection_config.get('method') == 'variance_threshold':
             self.variance_threshold = VarianceThreshold(
-                threshold=selection_config['threshold']
+                threshold=selection_config.get('threshold', 0.01)
             )
             selected_features = self.variance_threshold.fit_transform(data)
             
@@ -152,14 +144,15 @@ class DataCleaner:
         """Apply dimensionality reduction techniques."""
         logger.info("Applying dimensionality reduction")
         
-        dim_reduction_config = self.config['preprocessing']['dimensionality_reduction']
+        dim_reduction_config = self.config['preprocessing'].get('dimensionality_reduction', {})
         
-        if dim_reduction_config['method'] == 'pca':
-            self.pca = PCA(n_components=dim_reduction_config['n_components'])
+        if dim_reduction_config.get('method') == 'pca':
+            n_components = dim_reduction_config.get('n_components', min(data.shape[1], 3))
+            self.pca = PCA(n_components=n_components)
             reduced_features = self.pca.fit_transform(data)
             
             # Create feature names
-            feature_names = [f"PC{i+1}" for i in range(dim_reduction_config['n_components'])]
+            feature_names = [f"PC{i+1}" for i in range(n_components)]
             return pd.DataFrame(reduced_features, columns=feature_names, index=data.index)
         
         return data
@@ -179,6 +172,8 @@ class DataCleaner:
             joblib.dump(self.variance_threshold, output_path / 'variance_threshold.joblib')
         if self.pca is not None:
             joblib.dump(self.pca, output_path / 'pca.joblib')
+        if self.label_encoders:
+            joblib.dump(self.label_encoders, output_path / 'label_encoders.joblib')
     
     def load_preprocessors(self, input_dir: str) -> None:
         """Load preprocessor objects from disk."""
@@ -193,4 +188,6 @@ class DataCleaner:
         if (input_path / 'variance_threshold.joblib').exists():
             self.variance_threshold = joblib.load(input_path / 'variance_threshold.joblib')
         if (input_path / 'pca.joblib').exists():
-            self.pca = joblib.load(input_path / 'pca.joblib') 
+            self.pca = joblib.load(input_path / 'pca.joblib')
+        if (input_path / 'label_encoders.joblib').exists():
+            self.label_encoders = joblib.load(input_path / 'label_encoders.joblib') 

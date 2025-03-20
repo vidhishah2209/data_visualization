@@ -12,13 +12,16 @@ from pathlib import Path
 import joblib
 import logging
 import importlib
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
 
 logger = logging.getLogger(__name__)
 
 class ModelTrainer:
     def __init__(self, config: Dict[str, Any]):
-        """Initialize the model trainer with configuration."""
+        """Initialize with configuration."""
         self.config = config
+        self.model_config = config.get('model', {})
         self.models = {}
         self.best_models = {}
         self.feature_importance = {}
@@ -149,45 +152,107 @@ class ModelTrainer:
         output_dir = Path(self.config['output']['visualization_dir'])
         fig.write_html(output_dir / f'confusion_matrix_{model_name}.html')
     
-    def train_models(self, X_train: pd.DataFrame, y_train: pd.Series,
-                    X_val: pd.DataFrame = None, y_val: pd.Series = None) -> None:
-        """Train multiple models and store results."""
-        logger.info("Starting model training pipeline")
+    def train_models(self, X_train: pd.DataFrame, X_test: pd.DataFrame, 
+                    y_train: pd.Series, y_test: pd.Series) -> Tuple[Dict[str, Any], Dict[str, float]]:
+        """Train and evaluate multiple models."""
+        logger.info("Starting model training")
         
-        for model_name, model_config in self.config['models'].items():
-            logger.info(f"Training {model_name}")
-            
-            # Get model instance
-            model = self._get_model_instance(model_name, model_config)
-            
-            # Perform hyperparameter tuning if enabled
-            if model_config['hyperparameter_tuning']['enabled']:
-                model, best_params = self._tune_hyperparameters(model, X_train, y_train)
-                logger.info(f"Best parameters for {model_name}: {best_params}")
-            
-            # Train model
-            model.fit(X_train, y_train)
-            self.models[model_name] = model
-            
-            # Evaluate model
-            metrics = self._evaluate_model(model, X_train, y_train, X_val, y_val)
-            self.metrics[model_name] = metrics
-            
-            # Generate visualizations
-            self._plot_feature_importance(model, X_train.columns.tolist(), model_name)
-            self._plot_confusion_matrix(model, X_train, y_train, model_name)
-            
-            # Save model if configured
-            if self.config['output']['save_models']:
-                model_dir = Path(self.config['output']['model_dir'])
-                model_dir.mkdir(parents=True, exist_ok=True)
-                joblib.dump(model, model_dir / f'{model_name}.joblib')
+        # Handle NaN values
+        if y_train.isnull().any():
+            logger.warning("Found NaN values in y_train, dropping those rows")
+            mask = ~y_train.isnull()
+            X_train = X_train[mask]
+            y_train = y_train[mask]
         
-        # Save metrics
-        if self.config['output']['save_metrics']:
-            metrics_dir = Path(self.config['output']['metrics_dir'])
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame(self.metrics).to_csv(metrics_dir / 'model_metrics.csv')
+        if y_test.isnull().any():
+            logger.warning("Found NaN values in y_test, dropping those rows")
+            mask = ~y_test.isnull()
+            X_test = X_test[mask]
+            y_test = y_test[mask]
+        
+        if X_train.isnull().any().any():
+            logger.warning("Found NaN values in X_train, filling with mean")
+            X_train = X_train.fillna(X_train.mean())
+        
+        if X_test.isnull().any().any():
+            logger.warning("Found NaN values in X_test, filling with mean")
+            X_test = X_test.fillna(X_test.mean())
+        
+        # Get list of models to try
+        models_to_try = self.model_config.get('models_to_try', ['random_forest', 'gradient_boosting', 'logistic_regression'])
+        
+        # Train each model
+        for model_name in models_to_try:
+            try:
+                logger.info(f"Training {model_name}")
+                model = self._get_model(model_name)
+                model.fit(X_train, y_train)
+                self.models[model_name] = model
+                
+                # Make predictions
+                y_pred = model.predict(X_test)
+                
+                # Calculate metrics
+                metrics = self._calculate_metrics(y_test, y_pred)
+                self.metrics[model_name] = metrics
+                
+                logger.info(f"Model {model_name} trained successfully")
+                logger.info(f"Metrics: {metrics}")
+                
+            except Exception as e:
+                logger.error(f"Error training {model_name}: {str(e)}")
+                continue
+        
+        # Calculate ensemble metrics if enabled and if we have trained models
+        if self.model_config.get('ensemble', True) and self.models:
+            ensemble_metrics = self._calculate_ensemble_metrics(X_test, y_test)
+            logger.info(f"Ensemble metrics: {ensemble_metrics}")
+            self.metrics['ensemble'] = ensemble_metrics
+        
+        # Return best model's metrics if we have any models
+        if self.models:
+            best_model_name = max(self.metrics.items(), key=lambda x: x[1].get('accuracy', 0))[0]
+            return self.models, self.metrics[best_model_name]
+        else:
+            logger.error("No models were successfully trained")
+            return {}, {}
+    
+    def _get_model(self, model_name: str) -> Any:
+        """Get model instance based on name."""
+        if model_name == 'random_forest':
+            return RandomForestClassifier(n_estimators=100, random_state=42)
+        elif model_name == 'gradient_boosting':
+            return GradientBoostingClassifier(random_state=42)
+        elif model_name == 'logistic_regression':
+            return LogisticRegression(random_state=42)
+        else:
+            raise ValueError(f"Unknown model: {model_name}")
+    
+    def _calculate_metrics(self, y_true: pd.Series, y_pred: pd.Series) -> Dict[str, float]:
+        """Calculate evaluation metrics."""
+        return {
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(y_true, y_pred),
+            'recall': recall_score(y_true, y_pred),
+            'f1': f1_score(y_true, y_pred),
+            'roc_auc': roc_auc_score(y_true, y_pred)
+        }
+    
+    def _calculate_ensemble_metrics(self, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+        """Calculate metrics for ensemble predictions."""
+        if not self.models:
+            return {}
+        
+        # Get predictions from all models
+        predictions = []
+        for model in self.models.values():
+            predictions.append(model.predict_proba(X_test)[:, 1])
+        
+        # Average predictions
+        ensemble_pred = np.mean(predictions, axis=0)
+        ensemble_pred_binary = (ensemble_pred > 0.5).astype(int)
+        
+        return self._calculate_metrics(y_test, ensemble_pred_binary)
     
     def predict(self, X: pd.DataFrame, model_name: str = None) -> pd.Series:
         """Make predictions using trained model(s)."""

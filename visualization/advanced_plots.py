@@ -106,6 +106,13 @@ class AdvancedVisualizer:
         
         # Prepare data
         X = data.select_dtypes(include=['float64', 'int64'])
+        
+        # Handle any remaining NaN values
+        if X.isnull().any().any():
+            logger.warning("Found NaN values in data, filling with mean")
+            X = X.fillna(X.mean())
+        
+        # Scale the data
         X_scaled = StandardScaler().fit_transform(X)
         
         # Apply PCA
@@ -261,6 +268,66 @@ class AdvancedVisualizer:
         )
         
         fig.write_html(self.output_dir / f'3d_surface_{x}_{y}_{z}.html')
+    
+    def create_all_plots(self, data: pd.DataFrame, models: Dict[str, Any], explanations: Dict[str, Any]) -> None:
+        """Create all visualization plots for the data, models, and explanations."""
+        logger.info("Creating all visualization plots")
+        
+        # Get target column from config
+        target_col = self.config['data']['target_column']
+        
+        # Create basic data visualizations
+        self.create_distribution_plots(data)
+        self.create_correlation_heatmap(data)
+        self.create_box_plots(data, target_col)
+        
+        # Create PCA visualization if we have enough features
+        if len(data.select_dtypes(include=['float64', 'int64']).columns) >= 3:
+            self.create_3d_pca_visualization(data, target_col)
+        
+        # Create feature relationships if we have enough features
+        if len(data.select_dtypes(include=['float64', 'int64']).columns) >= 2:
+            self.create_feature_relationships(data, target_col)
+        
+        # Create model-specific visualizations
+        for model_name, model in models.items():
+            if hasattr(model, 'feature_importances_'):
+                # Get feature names from original data if available
+                feature_names = getattr(model, 'feature_names_in_', None)
+                if feature_names is None:
+                    # If feature names not available, use PCA component names
+                    feature_names = [f'PC{i+1}' for i in range(len(model.feature_importances_))]
+                
+                # Create feature importance plot
+                importances = pd.DataFrame({
+                    'feature': feature_names,
+                    'importance': model.feature_importances_
+                }).sort_values('importance', ascending=False)
+                
+                fig = px.bar(
+                    importances,
+                    x='importance',
+                    y='feature',
+                    title=f'Feature Importance - {model_name}',
+                    orientation='h'
+                )
+                fig.write_html(self.output_dir / f'feature_importance_{model_name}.html')
+        
+        # Create explanation visualizations
+        for model_name, explanation in explanations.items():
+            if explanation and isinstance(explanation, dict):
+                # Create LIME explanation plot if available
+                if 'lime_explanation' in explanation:
+                    fig = px.bar(
+                        explanation['lime_explanation'],
+                        x='value',
+                        y='feature',
+                        title=f'LIME Explanation - {model_name}',
+                        orientation='h'
+                    )
+                    fig.write_html(self.output_dir / f'lime_explanation_{model_name}.html')
+        
+        logger.info("All visualization plots created successfully")
     
     def create_all_visualizations(self, data: pd.DataFrame, target: Optional[str] = None) -> None:
         """Create all configured visualizations."""
